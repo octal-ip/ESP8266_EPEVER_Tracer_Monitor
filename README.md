@@ -1,7 +1,7 @@
 # ESP8266_EPEVER_Tracer_Monitor
 This project is an ESP8266 based monitoring device for EPEVER solar charge controllers. It queries the charge controller using MODBUS and then sends all statistics to InfluxDB/Grafana. The provided code is suited to the Platform.io development environment.
 
-Four pieces of hardware are necessary:
+#### Hardware
 - An ESP8266. I recommend using the Wemos D1 Mini, as they're small, cheap and well suited to this project.  
 ![Wemos D1 Mini](https://github.com/octal-ip/ESP8266_EPEVER_Tracer_Monitor/blob/main/pics/D1_mini.png "Wemos D1 Mini")
 - A logic level shifter to convert the 3.3v UART signals from the ESP8266 to 5V for the RS485 adaptor.  
@@ -11,7 +11,7 @@ Four pieces of hardware are necessary:
 - An old Ethernet cable you're willing to sacrifice. This will plug into the RJ45 jack on the Tracer and will also provide power from the Tracer to the other components.
 
 
-#### Hardware wiring
+#### Wiring
 | Wemos D1 Mini | Logic level shifter |
 | ------------ | ------------ |
 | D6 | LV1 |
