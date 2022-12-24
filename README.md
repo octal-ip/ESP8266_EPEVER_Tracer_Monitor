@@ -9,12 +9,19 @@ Four pieces of hardware are necessary:
 
 Hardware is connected together as follows:
 3.3v pin on Wemos D1 Mini -> LV pin on logic level shifter.
+
 5v pin on Wemons D1 Mini -> HV pin on logic level shifter.
+
 D6 pin on Wemos D1 Mini -> LV1 pin on logic level shifter.
+
 D5 pin on Wemos D1 Mini -> LV2 pin on logic level shifter.
+
 Ground pin on Wemos D1 Mini -> Ground pin on logic level shifter.
+
 TX pin on Wemos D1 Mini -> LV3 pin on logic level shifter.
+
 RX pin on Wemos D1 Mini -> LV4 pin on logic level shifter.
+
 
 HV1 pin on logic level shifter -> DE pin on MAX485 board.
 HV2 pin on logic level shifter -> RE pin on MAX485 board.
