@@ -37,7 +37,7 @@ This project is an ESP8266 based monitoring device for EPEVER solar charge contr
 | Pin 4 (T568B Blue) | B | - | - |
 
 
-### Credits:
+#### Credits:
 [4-20ma for ModbusMaster](https://github.com/4-20ma/ModbusMaster)
 
 [RobTillaart for RunningAverage](https://github.com/RobTillaart/RunningAverage)
@@ -47,6 +47,6 @@ This project is an ESP8266 based monitoring device for EPEVER solar charge contr
 [Tobias Schürg for InfluxDB Client](https://github.com/tobiasschuerg/InfluxDB-Client-for-Arduino/)
 
 
-### Release notes:
-#### Nob 12, 2023:
+#### Release notes:
+##### Nov 12, 2023:
 	- Updated to use the official InfluxDB Client for Arduino, introducing support for InfluxDB v2
