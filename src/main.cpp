@@ -1,39 +1,23 @@
-//Choose which protocol you'd like to post the statistics to your database by uncommenting one (or more) of the definitions below.
-#define INFLUX_UDP
-//#define INFLUX_HTTP
-
 #include <Arduino.h>
 #include <ModbusMaster.h>
 #include <ArduinoOTA.h>
 #include <RunningAverage.h>
 #include <ESP8266WiFi.h>
 #include <ESP8266mDNS.h>
-#include <WiFiUdp.h>
-#include <TelnetPrint.h>
+#include <InfluxDbClient.h>
+#include <TelnetStream.h>
 
 #include <secrets.h> /*Edit this file to include the following details.
-SECRET_INFLUXDB only required if using HTTP mode.
-SECRET_INFLUX_IP_OCTETx only required if using UDP mode.
 
-#define SECRET_SSID "<ssid>>"
-#define SECRET_PASS "<password>"
-#define SECRET_INFLUXDB "http://<IP Address>:8086/write?db=<db name>&u=<username>&p=<password>"
-#define SECRET_INFLUX_IP_OCTET1 <first IP octet>
-#define SECRET_INFLUX_IP_OCTET2 <second IP octet>
-#define SECRET_INFLUX_IP_OCTET3 <third IP octet>
-#define SECRET_INFLUX_IP_OCTET4 <last IP octet>
+#define SECRET_SSID "ssid"
+#define SECRET_PASS "password"
+#define SECRET_INFLUXDB_URL "influxdb-url"
+#define SECRET_INFLUXDB_TOKEN "toked-id"
+#define SECRET_INFLUXDB_ORG "org"
+#define SECRET_INFLUXDB_BUCKET "bucket"
 */
 
-#ifdef INFLUX_HTTP
-  #include <ESP8266HTTPClient.h>
-  int httpResponseCode = 0;
-#endif
-
-#ifdef INFLUX_UDP
-  WiFiUDP udp;
-  IPAddress influxhost = {SECRET_INFLUX_IP_OCTET1, SECRET_INFLUX_IP_OCTET2, SECRET_INFLUX_IP_OCTET3, SECRET_INFLUX_IP_OCTET4}; // The IP address of the InfluxDB host for UDP packets.
-  int influxport = 8089; // The port that the InfluxDB server is listening on
-#endif
+InfluxDBClient client(SECRET_INFLUXDB_URL, SECRET_INFLUXDB_ORG, SECRET_INFLUXDB_BUCKET, SECRET_INFLUXDB_TOKEN);
 
 #define MAX485_DE 12
 #define MAX485_RE 14
@@ -59,58 +43,40 @@ SECRET_INFLUX_IP_OCTETx only required if using UDP mode.
     Charging equipment status    3201
     Discharging equipment status 3202
 */
-#define PANEL_VOLTS      0x00
-#define PANEL_AMPS       0x01
-#define PANEL_POWER_L    0x02
-#define PANEL_POWER_H    0x03
-#define BATT_VOLTS       0x04
-#define BATT_AMPS        0x05
-#define BATT_POWER_L     0x06
-#define BATT_POWER_H     0x07
-#define LOAD_VOLTS       0x0C
-#define LOAD_AMPS        0x0D
-#define LOAD_POWER_L     0x0E
-#define LOAD_POWER_H     0x0F
-#define BATT_TEMP        0x10
-#define INT_TEMP         0x11
-#define HEATSINK_TEMP    0x12
-#define BATT_SOC         0x1A
-#define REMOTE_BATT_TEMP 0x1B
-
-const int realtimeMetrics = 11; //The number of realtime metrics we'll be collecting.
-float realtime[realtimeMetrics];
 
 byte avSamples = 10;
-int failures = 0; //The number of failed WiFi or HTTP post attempts. Will automatically restart the ESP if too many failures occurr in a row.
+int failures = 0; //The number of failed operations. Will automatically restart the ESP if too many failures occurr in a row.
 
-RunningAverage realtimeAverage[realtimeMetrics] = {
-  RunningAverage(avSamples),
-  RunningAverage(avSamples),
-  RunningAverage(avSamples),
-  RunningAverage(avSamples),
-  RunningAverage(avSamples),
-  RunningAverage(avSamples),
-  RunningAverage(avSamples),
-  RunningAverage(avSamples),
-  RunningAverage(avSamples),
-  RunningAverage(avSamples),
-  RunningAverage(avSamples)
+struct stats{
+   const char *name;
+   byte address;
+   int type; //Whether the result is 16 or 32 bit number.
+   float value;
+   RunningAverage average;
+   float multiplier;
+   Point measurement;
+};
+
+stats arrstats[14] = {
+  //Register name, MODBUS address, integer type (0 = uint16_t​, 1 = uint32_t​), value, running average, multiplier, InfluxDB measurement)
+  {"PV_array_voltage", 0x00, 0, 0.0, RunningAverage(avSamples), 0.01, Point("PV_array_voltage")},
+  {"PV_array_current", 0x01, 0, 0.0, RunningAverage(avSamples), 0.01, Point("PV_array_current")},
+  {"PV_array_power", 0x02, 1, 0.0, RunningAverage(avSamples), 0.01, Point("PV_array_power")},
+  {"Battery_voltage", 0x04, 0, 0.0, RunningAverage(avSamples), 0.01, Point("Battery_voltage")},
+  {"Battery_charging_current", 0x05, 0, 0.0, RunningAverage(avSamples), 0.01, Point("Battery_charging_current")},
+  {"Battery_charging_power", 0x06, 1, 0.0, RunningAverage(avSamples), 0.01, Point("Battery_charging_power")},
+  {"Load_voltage", 0x0C, 0, 0.0, RunningAverage(avSamples), 0.01, Point("Load_voltage")},
+  {"Load_current", 0x0D, 0, 0.0, RunningAverage(avSamples), 0.01, Point("Load_current")},
+  {"Load_power", 0x0E, 1, 0.0, RunningAverage(avSamples), 0.01, Point("Load_power")},
+  {"Battery_temperature", 0x10, 0, 0.0, RunningAverage(avSamples), 0.01, Point("Battery_temperature")},
+  {"Internal_temperature", 0x11, 0, 0.0, RunningAverage(avSamples), 0.01, Point("Internal_temperature")},
+  {"Heatsink_temperature", 0x12, 0, 0.0, RunningAverage(avSamples), 0.01, Point("Heatsink_temperature")},
+  {"Battery_SOC", 0x1A, 0, 0.0, RunningAverage(avSamples), 0.01, Point("Battery_SOC")},
+  {"Remote_battery_temperature", 0x1A, 0, 0.0, RunningAverage(avSamples), 0.01, Point("Remote_battery_temperature")}
 };
 
 byte collectedSamples = 0;
 unsigned long lastUpdate = 0;
-
-const char *realtimeMetricNames[] = {"PV_array_voltage",
-                       "PV_array_current",
-                       "PV_array_power",
-                       "Battery_voltage",
-                       "Battery_charging_current",
-                       "Battery_charging_power",
-                       "Load_voltage",
-                       "Load_current",
-                       "Load_power",
-                       "Battery_temperature",
-                       "Internal_temperature"};
 
 /*
 "Statistical parameter registers
@@ -133,7 +99,7 @@ const char *realtimeMetricNames[] = {"PV_array_voltage",
     Ambient temperature          331E
 */
 
-// instantiate ModbusMaster object
+// Create the ModbusMaster object
 ModbusMaster EPEver;
 
 void preTransmission() {
@@ -232,48 +198,20 @@ void setup()
   EPEver.preTransmission(preTransmission);
   EPEver.postTransmission(postTransmission);
 
-  //Telnet log is accessible at port 23
-  TelnetPrint.begin();
-}
+  // Telnet log is accessible at port 23
+  TelnetStream.begin();
 
+  // Check the InfluxDB connection
+  if (client.validateConnection()) {
+    Serial.print("Connected to InfluxDB: ");
+    Serial.println(client.getServerUrl());
+  } else {
+    Serial.print("InfluxDB connection failed: ");
+    Serial.println(client.getLastErrorMessage());
+    Serial.print("Restarting...");
+    ESP.restart();
+  }
 
-void sendInfluxData (const char *postData) {
-  TelnetPrint.print("Posting to InfluxDB: "); TelnetPrint.println(postData);
-
-  #ifdef INFLUX_UDP
-    udp.beginPacket(influxhost, influxport);
-    udp.printf(postData);
-    udp.endPacket();
-    delay(5); //This is required to allow the UDP transmission to complete
-  #endif
-
-  #ifdef INFLUX_HTTP
-    WiFiClient client;
-    HTTPClient http;
-    http.begin(client, SECRET_INFLUXDB);
-    http.addHeader("Content-Type", "text/plain");
-    
-    httpResponseCode = http.POST(postData);
-    delay(10); //For some reason this delay is critical to the stability of the ESP.
-    
-    if (httpResponseCode >= 200 && httpResponseCode < 300){ //If the HTTP post was successful
-      String response = http.getString(); //Get the response to the request
-      //Serial.print("HTTP POST Response Body: "); Serial.println(response);
-      TelnetPrint.print("HTTP POST Response Code: "); TelnetPrint.println(httpResponseCode);
-
-      if (failures >= 1) {
-        failures--; //Decrement the failure counter.
-      }
-    }
-    else {
-      TelnetPrint.print("Error sending HTTP POST: "); TelnetPrint.println(httpResponseCode);
-      if (httpResponseCode <= 0) {
-        failures++; //Incriment the failure counter if the server couldn't be reached.
-      }
-    }
-    http.end();
-    client.stop();
-  #endif
 }
 
 
@@ -290,11 +228,9 @@ void loop()
 
   if ((unsigned long)(millis() - lastUpdate) >= 30000) { //Every 30 seconds.
   
-    float rssi = WiFi.RSSI();
-    Serial.print("WiFi signal strength is: "); Serial.println(rssi);
-    TelnetPrint.print("WiFi signal strength is: "); TelnetPrint.println(rssi);
+    TelnetStream.printf("\r\n\r\nWiFi signal strength is: %d\r\n", WiFi.RSSI());
 
-    TelnetPrint.println("30 seconds has passed. Reading the MODBUS...");
+    TelnetStream.println("30 seconds has passed. Reading the MODBUS...");
     uint8_t result;
     
     Serial.flush(); //Make sure the hardware serial buffer is empty before communicating over MODBUS.
@@ -303,105 +239,46 @@ void loop()
     result = EPEver.readInputRegisters(0x3100, 18); // Read registers starting at 0x3100 for the realtime data.
     
     if (result == EPEver.ku8MBSuccess) {
-      TelnetPrint.println("MODBUS read successful.");
-      for (int i = 0; i < realtimeMetrics; i++) {
-        realtime[i] = 0.0; //Clear all the metrics.
-        switch (i) {
-          case 0: //PV array voltage
-            realtime[i] = EPEver.getResponseBuffer(PANEL_VOLTS)/100.0f;
-            realtimeAverage[i].addValue(realtime[i]);
-            break;
-          case 1: //PV array current
-            realtime[i] = EPEver.getResponseBuffer(PANEL_AMPS)/100.0f;
-            realtimeAverage[i].addValue(realtime[i]);
-            break;
-          case 2: //PV array power
-            realtime[i] = (EPEver.getResponseBuffer(PANEL_POWER_L) | (EPEver.getResponseBuffer(PANEL_POWER_H) << 8))/100.0f;
-            realtimeAverage[i].addValue(realtime[i]);
-            break;
-          case 3: //Battery voltage
-            realtime[i] = EPEver.getResponseBuffer(BATT_VOLTS)/100.0f;
-            realtimeAverage[i].addValue(realtime[i]);
-            break;
-          case 4: //Battery charging current
-            realtime[i] = EPEver.getResponseBuffer(BATT_AMPS)/100.0f;
-            realtimeAverage[i].addValue(realtime[i]);
-            break;
-          case 5: //Battery charging power
-            realtime[i] = (EPEver.getResponseBuffer(BATT_POWER_L) | (EPEver.getResponseBuffer(BATT_POWER_H) << 8))/100.0f;
-            realtimeAverage[i].addValue(realtime[i]);
-            break;
-          case 6: //Load voltage
-            realtime[i] = EPEver.getResponseBuffer(LOAD_VOLTS)/100.0f;
-            realtimeAverage[i].addValue(realtime[i]);
-            break;
-          case 7: //Load current
-            realtime[i] = EPEver.getResponseBuffer(LOAD_AMPS)/100.0f;
-            realtimeAverage[i].addValue(realtime[i]);
-            break;
-          case 8: //Load power
-            realtime[i] = (EPEver.getResponseBuffer(LOAD_POWER_L) | (EPEver.getResponseBuffer(LOAD_POWER_H) << 8))/100.0f;
-            realtimeAverage[i].addValue(realtime[i]);
-            break;
-          case 9: //Battery temperature
-            realtime[i] = EPEver.getResponseBuffer(BATT_TEMP)/100.0f;
-            realtimeAverage[i].addValue(realtime[i]);
-            break;
-          case 10: //Internal temperature
-            realtime[i] = EPEver.getResponseBuffer(INT_TEMP)/100.0f;
-            realtimeAverage[i].addValue(realtime[i]);
-            break;
-        }
+      TelnetStream.println("MODBUS read successful.");
       
-        Serial.print(realtimeMetricNames[i]); Serial.print(": "); Serial.print(realtime[i]); Serial.print(" Average: "); Serial.println(realtimeAverage[i].getAverage());
-
-        char realtimeString[8];
-        dtostrf(realtime[i], 1, 2, realtimeString);
+      for (int i = 0; i < 14; i++) {  //Iterate through each of the MODBUS registers and obtain their values.
+        ArduinoOTA.handle();
+        if (arrstats[i].type == 0) { //If the register is a normal 16-bit integer...
+          arrstats[i].value = (EPEver.getResponseBuffer(arrstats[i].address) * arrstats[i].multiplier); //Calculatge the actual value.
+        }
+        else if (arrstats[i].type == 1) { //If the register is a 32-bit integer...
+          arrstats[i].value = (EPEver.getResponseBuffer(arrstats[i].address) | (EPEver.getResponseBuffer(arrstats[i].address+1) << 8)) * arrstats[i].multiplier;  //Calculatge the actual value.
+        }
         
-        char realtimeAvString[8];
-        dtostrf(realtimeAverage[i].getAverage(), 1, 2, realtimeAvString);
-        
-        TelnetPrint.print(realtimeMetricNames[i]); TelnetPrint.print(": "); TelnetPrint.print(realtimeString); TelnetPrint.print(" Average: "); TelnetPrint.println(realtimeAvString);
+        arrstats[i].average.addValue(arrstats[i].value); //Add the value to the running average.
 
-        if (collectedSamples == avSamples) { //Once we've collected enough samples to flush the averages, send the data to InfluxDB.
-          TelnetPrint.println("Posting the data...");
+        TelnetStream.printf("%s: %.1f, Average: %.1f, Samples: %d \r\n", arrstats[i].name, arrstats[i].value, arrstats[i].average.getAverage(), arrstats[i].average.getCount());
 
-          #if defined (INFLUX_HTTP) || defined (INFLUX_UDP)
-            char post[70];
-            sprintf(post, "%s,sensor=solar value=%s", realtimeMetricNames[i], realtimeAvString);
-            sendInfluxData(post);
-          #endif
+        if (arrstats[i].average.getCount() >= avSamples) { //Once we've collected enough samples, send the data to InfluxDB and flush the averages.
+          arrstats[i].measurement.clearFields();
+          arrstats[i].measurement.clearTags();
+          arrstats[i].measurement.addTag("sensor", "EPEver-solar");
+          arrstats[i].measurement.addField("value", arrstats[i].average.getAverage());
+
+          TelnetStream.print("Sending data to InfluxDB: ");
+          TelnetStream.println(client.pointToLineProtocol(arrstats[i].measurement));
+          
+          if (!client.writePoint(arrstats[i].measurement)) {
+            failures++;
+            TelnetStream.print("InfluxDB write failed: ");
+            TelnetStream.println(client.getLastErrorMessage());
+          }
+          else if (failures >= 1) failures --;
+          
+          arrstats[i].average.clear();
         }
         yield();
       }
-
-      if (collectedSamples >= avSamples) {
-        TelnetPrint.print(collectedSamples); TelnetPrint.println(" samples have been collected. Resetting the counter."); TelnetPrint.println();
-        collectedSamples = 0;
-        TelnetPrint.println("Posting uptime data...");
-
-        char uptimeString[20];
-        dtostrf((millis()/60000), 1, 0, uptimeString); //Uptime in minutes.
-
-
-        #if defined (INFLUX_HTTP) || defined (INFLUX_UDP)
-          char post[70];
-          sprintf(post, "uptime,sensor=solar value=%s", uptimeString);
-          sendInfluxData(post);
-        #endif
-      }
-      else {
-        collectedSamples++;
-        TelnetPrint.print(collectedSamples); TelnetPrint.println(" samples have been collected."); TelnetPrint.println();
-      }
     }
-
     else {
-      Serial.print("MODBUS read failed. Returned value: ");
-      Serial.println(result, HEX);
-      TelnetPrint.print("MODBUS read failed. Returned value: "); TelnetPrint.println(result);
+      TelnetStream.print("MODBUS read failed. Returned value: "); TelnetStream.println(result);
       failures++;
-      TelnetPrint.print("Failure counter: "); TelnetPrint.println(failures);
+      TelnetStream.print("Failure counter: "); TelnetStream.println(failures);
     }
 
     lastUpdate = millis();
@@ -409,7 +286,7 @@ void loop()
 
   if (failures >= 20) {
     Serial.print("Too many failures, rebooting...");
-    TelnetPrint.print("Failure counter has reached: "); TelnetPrint.print(failures); TelnetPrint.println(". Rebooting...");
-    ESP.restart(); //Reboot the ESP if there's been problems sending the data.
+    TelnetStream.print("Failure counter has reached: "); TelnetStream.print(failures); TelnetStream.println(". Rebooting...");
+    ESP.restart(); //Reboot the ESP if too many problems have been counted.
   }
 }
