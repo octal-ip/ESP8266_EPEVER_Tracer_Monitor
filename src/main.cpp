@@ -17,7 +17,7 @@
 #define SECRET_INFLUXDB_BUCKET "bucket"
 */
 
-InfluxDBClient client(SECRET_INFLUXDB_URL, SECRET_INFLUXDB_ORG, SECRET_INFLUXDB_BUCKET, SECRET_INFLUXDB_TOKEN);
+InfluxDBClient InfluxDBclient(SECRET_INFLUXDB_URL, SECRET_INFLUXDB_ORG, SECRET_INFLUXDB_BUCKET, SECRET_INFLUXDB_TOKEN);
 
 #define MAX485_DE 12
 #define MAX485_RE 14
@@ -75,7 +75,6 @@ stats arrstats[14] = {
   {"Remote_battery_temperature", 0x1A, 0, 0.0, RunningAverage(avSamples), 0.01, Point("Remote_battery_temperature")}
 };
 
-byte collectedSamples = 0;
 unsigned long lastUpdate = 0;
 
 /*
@@ -202,12 +201,12 @@ void setup()
   TelnetStream.begin();
 
   // Check the InfluxDB connection
-  if (client.validateConnection()) {
+  if (InfluxDBclient.validateConnection()) {
     Serial.print("Connected to InfluxDB: ");
-    Serial.println(client.getServerUrl());
+    Serial.println(InfluxDBclient.getServerUrl());
   } else {
     Serial.print("InfluxDB connection failed: ");
-    Serial.println(client.getLastErrorMessage());
+    Serial.println(InfluxDBclient.getLastErrorMessage());
     Serial.print("Restarting...");
     ESP.restart();
   }
@@ -261,12 +260,12 @@ void loop()
           arrstats[i].measurement.addField("value", arrstats[i].average.getAverage());
 
           TelnetStream.print("Sending data to InfluxDB: ");
-          TelnetStream.println(client.pointToLineProtocol(arrstats[i].measurement));
+          TelnetStream.println(InfluxDBclient.pointToLineProtocol(arrstats[i].measurement));
           
-          if (!client.writePoint(arrstats[i].measurement)) {
+          if (!InfluxDBclient.writePoint(arrstats[i].measurement)) {  //Write the data point to InfluxDB
             failures++;
             TelnetStream.print("InfluxDB write failed: ");
-            TelnetStream.println(client.getLastErrorMessage());
+            TelnetStream.println(InfluxDBclient.getLastErrorMessage());
           }
           else if (failures >= 1) failures --;
           
