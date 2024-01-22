@@ -21,6 +21,7 @@ This project is an ESP8266 based monitoring device for EPEVER solar charge contr
 | D5 | LV2 |
 | TX  |  LV3 |
 | RX  |  LV4 |
+| 3v3  |  LV |
 
 | Logic level shifter | MAX485 |
 | ------------ | ------------ |
